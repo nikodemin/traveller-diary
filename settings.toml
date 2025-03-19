@@ -1,0 +1,4 @@
+window_init_size_x = 800.0
+window_init_size_y = 600.0
+default_language = "EN"
+languages = ["EN", "RU"]

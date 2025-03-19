@@ -1,0 +1,2 @@
+RU = { file_menu = "Файл", new_travel_btn = "Новый план путешествия", settings_menu = "Настройки", change_language_menu = "Сменить язык" }
+EN = { file_menu = "File", new_travel_btn = "New travel plan", settings_menu = "Settings", change_language_menu = "Change language" }
