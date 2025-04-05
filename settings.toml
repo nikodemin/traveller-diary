@@ -2,3 +2,6 @@ window_init_size_x = 800.0
 window_init_size_y = 600.0
 default_language = "EN"
 languages = ["EN", "RU"]
+travels_panel_min_width = 200.0
+travels_panel_max_width = 500.0
+travels_panel_default_width = 500.0

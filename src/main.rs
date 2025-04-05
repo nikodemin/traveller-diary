@@ -1,3 +1,4 @@
+mod dao;
 mod model;
 
 use anyhow::anyhow;
@@ -53,66 +54,86 @@ impl eframe::App for DiaryApp {
             .get_table(&self.state.language)
             .unwrap();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.horizontal_top(|ui| {
-                    let file_str = localization_conf
-                        .get("file_menu")
-                        .unwrap()
-                        .clone()
-                        .into_string()
-                        .unwrap();
-                    let new_travel_str = localization_conf
-                        .get("new_travel_btn")
-                        .unwrap()
-                        .clone()
-                        .into_string()
-                        .unwrap();
+                let file_str = localization_conf
+                    .get("file_menu")
+                    .unwrap()
+                    .clone()
+                    .into_string()
+                    .unwrap();
+                let new_travel_str = localization_conf
+                    .get("new_travel_btn")
+                    .unwrap()
+                    .clone()
+                    .into_string()
+                    .unwrap();
 
-                    let file_menu = ui.menu_button(file_str, |ui| {
-                        if ui.button(new_travel_str).clicked() {
-                            println!("new travel")
-                        }
-                    });
+                let file_menu = ui.menu_button(file_str, |ui| {
+                    if ui.button(new_travel_str).clicked() {
+                        println!("new travel")
+                    }
+                });
 
-                    let settings_str = localization_conf
-                        .get("settings_menu")
-                        .unwrap()
-                        .clone()
-                        .into_string()
-                        .unwrap();
-                    let change_language_str = localization_conf
-                        .get("change_language_menu")
-                        .unwrap()
-                        .clone()
-                        .into_string()
-                        .unwrap();
-                    let languages = self
-                        .settings_conf
-                        .get_array("languages")
-                        .unwrap()
-                        .iter()
-                        .flat_map(|x| x.clone().into_string())
-                        .collect::<Vec<_>>();
+                let settings_str = localization_conf
+                    .get("settings_menu")
+                    .unwrap()
+                    .clone()
+                    .into_string()
+                    .unwrap();
+                let change_language_str = localization_conf
+                    .get("change_language_menu")
+                    .unwrap()
+                    .clone()
+                    .into_string()
+                    .unwrap();
+                let languages = self
+                    .settings_conf
+                    .get_array("languages")
+                    .unwrap()
+                    .iter()
+                    .flat_map(|x| x.clone().into_string())
+                    .collect::<Vec<_>>();
 
-                    let settings_menu = ui.menu_button(settings_str, |ui| {
-                        ui.menu_button(change_language_str, |ui| {
-                            languages.iter().for_each(|l| {
-                                if ui.button(l).clicked() {
-                                    self.state = AppState {
-                                        language: l.to_owned(),
-                                        ..self.state
-                                    }
+                let settings_menu = ui.menu_button(settings_str, |ui| {
+                    ui.menu_button(change_language_str, |ui| {
+                        languages.iter().for_each(|l| {
+                            if ui.button(l).clicked() {
+                                self.state = AppState {
+                                    language: l.to_owned(),
+                                    ..self.state
                                 }
-                            })
+                            }
                         })
-                    });
+                    })
+                });
 
-                    file_menu;
-                    settings_menu;
-                })
-            })
+                file_menu;
+                settings_menu;
+            });
         });
+
+        let travels_panel_default_width = self
+            .settings_conf
+            .get_float("travels_panel_default_width")
+            .unwrap() as f32;
+        let travels_panel_min_width = self
+            .settings_conf
+            .get_float("travels_panel_min_width")
+            .unwrap() as f32;
+        let travels_panel_max_width = self
+            .settings_conf
+            .get_float("travels_panel_max_width")
+            .unwrap() as f32;
+
+        egui::SidePanel::left("travels_panel")
+            .default_width(travels_panel_default_width)
+            .resizable(true)
+            .min_width(travels_panel_min_width)
+            .max_width(travels_panel_max_width)
+            .show(ctx, |ui| {});
+
+        egui::CentralPanel::default().show(ctx, |ui| {});
     }
 }
 
