@@ -1,15 +1,16 @@
 use std::str::{self, Utf8Error};
 
 use chrono::{DateTime, ParseError, Utc};
-use egui::Image;
 use rusqlite::{
-    Connection,
+    Connection, ToSql,
     types::{FromSql, FromSqlError},
 };
 
+type Id = i64;
+
 #[derive(Debug, Clone)]
 pub struct Travel {
-    pub id: i32,
+    pub id: Id,
     pub country: String,
     pub city: String,
     pub began: DateTime<Utc>,
@@ -18,7 +19,7 @@ pub struct Travel {
 
 #[derive(Debug, Clone)]
 pub struct Post {
-    pub id: i32,
+    pub id: Id,
     pub photos: Vec<Photo>,
     pub text: String,
     pub began: DateTime<Utc>,
@@ -27,7 +28,7 @@ pub struct Post {
 
 #[derive(Debug, Clone)]
 pub struct Photo {
-    pub id: i32,
+    pub id: Id,
     pub data: Vec<u8>,
     pub date: DateTime<Utc>,
 }
@@ -49,18 +50,18 @@ type Res<T> = Result<T, rusqlite::Error>;
 trait DaoOps {
     fn init(&mut self) -> Result<(), refinery::Error>;
 
-    fn add_travel(&self, travel: Travel) -> Res<()>;
+    fn add_travel(&self, travel: Travel) -> Res<Id>;
     fn list_travels(&self, limut: u32, page: u32) -> Res<Vec<Travel>>;
     fn update_travel(&self, travel: Travel) -> Res<()>;
-    fn delete_travels(&self, travel_ids: Vec<String>) -> Res<()>;
+    fn delete_travels(&self, travel_ids: Vec<Id>) -> Res<()>;
 
-    fn add_post_to_travel(&self, travel_id: String, post: Post) -> Res<()>;
-    fn list_posts(&self, travel_id: String, limit: u32, page: u32) -> Res<Vec<Post>>;
+    fn add_post_to_travel(&self, travel_id: Id, post: Post) -> Res<Id>;
+    fn list_posts(&self, travel_id: Id, limit: u32, page: u32) -> Res<Vec<Post>>;
     fn update_post(&self, post: Post) -> Res<()>;
-    fn delete_posts(&self, post_ids: Vec<String>) -> Res<()>;
+    fn delete_posts(&self, post_ids: Vec<Id>) -> Res<()>;
 
-    fn add_photo_to_post(&self, post_id: String, photo: Image) -> Res<()>;
-    fn delete_photos(&self, photo_ids: Vec<String>) -> Res<()>;
+    fn add_photos_to_post(&self, post_id: Id, photos: Vec<Photo>) -> Res<()>;
+    fn delete_photos(&self, photo_ids: Vec<Id>) -> Res<()>;
 }
 
 mod embedded {
@@ -70,6 +71,16 @@ mod embedded {
 
 struct Wrapper<T> {
     value: T,
+}
+
+trait WrapperOps: Sized {
+    fn wrap(self) -> Wrapper<Self>;
+}
+
+impl WrapperOps for DateTime<Utc> {
+    fn wrap(self) -> Wrapper<Self> {
+        Wrapper { value: self }
+    }
 }
 
 impl Into<FromSqlError> for Wrapper<ParseError> {
@@ -102,24 +113,32 @@ impl FromSql for Wrapper<DateTime<Utc>> {
     }
 }
 
+impl ToSql for Wrapper<DateTime<Utc>> {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        let str = self.value.format(Dao::DT_FORMAT).to_string();
+
+        Ok(rusqlite::types::ToSqlOutput::from(str))
+    }
+}
+
 impl DaoOps for Dao {
     fn init(&mut self) -> Result<(), refinery::Error> {
         embedded::migrations::runner().run(&mut self.connection)?;
         Ok(())
     }
 
-    fn add_travel(&self, travel: Travel) -> Res<()> {
+    fn add_travel(&self, travel: Travel) -> Res<Id> {
         self.connection.execute(
             "insert into travel (id, country, city, began, ended) values (null, ?1, ?2, ?3, ?4)",
             (
                 travel.country,
                 travel.city,
-                travel.began.format(Self::DT_FORMAT).to_string(),
-                travel.ended.format(Self::DT_FORMAT).to_string(),
+                travel.began.wrap(),
+                travel.ended.wrap(),
             ),
         )?;
 
-        Ok(())
+        Ok(self.connection.last_insert_rowid())
     }
 
     fn list_travels(&self, limut: u32, page: u32) -> Res<Vec<Travel>> {
@@ -147,8 +166,8 @@ impl DaoOps for Dao {
             (
                 travel.country,
                 travel.city,
-                travel.began.format(Self::DT_FORMAT).to_string(),
-                travel.ended.format(Self::DT_FORMAT).to_string(),
+                travel.began.wrap(),
+                travel.ended.wrap(),
                 travel.id,
             ),
         )?;
@@ -156,7 +175,7 @@ impl DaoOps for Dao {
         Ok(())
     }
 
-    fn delete_travels(&self, travel_ids: Vec<String>) -> Res<()> {
+    fn delete_travels(&self, travel_ids: Vec<Id>) -> Res<()> {
         let placeholders = std::iter::repeat("?")
             .take(travel_ids.len())
             .collect::<Vec<_>>()
@@ -176,21 +195,16 @@ impl DaoOps for Dao {
         Ok(())
     }
 
-    fn add_post_to_travel(&self, travel_id: String, post: Post) -> Res<()> {
+    fn add_post_to_travel(&self, travel_id: Id, post: Post) -> Res<Id> {
         self.connection.execute(
             "INSERT INTO post (id, travel_id, text, began, ended) VALUES (null, ?1, ?2, ?3, ?4)",
-            (
-                travel_id,
-                post.text,
-                post.began.format(Self::DT_FORMAT).to_string(),
-                post.ended.format(Self::DT_FORMAT).to_string(),
-            ),
+            (travel_id, post.text, post.began.wrap(), post.ended.wrap()),
         )?;
 
-        Ok(())
+        Ok(self.connection.last_insert_rowid())
     }
 
-    fn list_posts(&self, travel_id: String, limit: u32, page: u32) -> Res<Vec<Post>> {
+    fn list_posts(&self, travel_id: Id, limit: u32, page: u32) -> Res<Vec<Post>> {
         let mut stmt = self.connection.prepare(
             "SELECT p.id, p.text, p.began, p.ended, ph.id, ph.data, ph.date
             FROM photo ph RIGHT JOIN (SELECT id, text, began, ended, travel_id FROM post LIMIT ?2 OFFSET ?3 ORDER BY ended DESC) p
@@ -218,7 +232,7 @@ impl DaoOps for Dao {
         }
 
         posts.iter().fold(
-            (Vec::<Post>::new(), None::<i32>),
+            (Vec::<Post>::new(), None::<Id>),
             |(mut posts, post_id), post| {
                 if let Some(id) = post_id {
                     if id == post.id {
@@ -239,18 +253,134 @@ impl DaoOps for Dao {
     }
 
     fn update_post(&self, post: Post) -> Res<()> {
-        todo!()
+        self.connection.execute(
+            "UPDATE posts SET text = ?, began = ?, ended = ? WHERE id = ?",
+            (post.text, post.began.wrap(), post.ended.wrap(), post.id),
+        )?;
+
+        Ok(())
     }
 
-    fn delete_posts(&self, post_ids: Vec<String>) -> Res<()> {
-        todo!()
+    fn delete_posts(&self, post_ids: Vec<Id>) -> Res<()> {
+        let placeholders = std::iter::repeat("?")
+            .take(post_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let mut statement = self
+            .connection
+            .prepare(&format!("delete from posts where id IN ({})", placeholders))?;
+
+        post_ids.iter().enumerate().fold(Ok(()), |acc, (i, id)| {
+            acc.and_then(|_| statement.raw_bind_parameter(i, id))
+        })?;
+
+        statement.raw_execute()?;
+        Ok(())
     }
 
-    fn add_photo_to_post(&self, post_id: String, photo: Image) -> Res<()> {
-        todo!()
+    fn add_photos_to_post(&self, post_id: Id, photos: Vec<Photo>) -> Res<()> {
+        let placeholders = std::iter::repeat("(NULL, ?, ?, ?)")
+            .take(photos.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let mut statement = self.connection.prepare(&format!(
+            "INSERT INTO photo (id, post_id, data, date) VALUES {}",
+            placeholders
+        ))?;
+
+        photos.iter().enumerate().fold(Ok(()), |acc, (i, photo)| {
+            acc.and_then(|_| statement.raw_bind_parameter(i * 3, post_id))
+                .and_then(|_| statement.raw_bind_parameter(i * 3 + 1, photo.data.clone()))
+                .and_then(|_| statement.raw_bind_parameter(i * 3 + 2, photo.date.wrap()))
+        })?;
+
+        Ok(())
     }
 
-    fn delete_photos(&self, photo_ids: Vec<String>) -> Res<()> {
-        todo!()
+    fn delete_photos(&self, photo_ids: Vec<Id>) -> Res<()> {
+        let placeholders = std::iter::repeat("?")
+            .take(photo_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let mut statement = self
+            .connection
+            .prepare(&format!("delete from photo where id IN ({})", placeholders))?;
+
+        photo_ids.iter().enumerate().fold(Ok(()), |acc, (i, id)| {
+            acc.and_then(|_| statement.raw_bind_parameter(i, id))
+        })?;
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Days;
+
+    use super::*;
+    use {prop::prelude::*, proptest as prop};
+
+    fn init() -> Dao {
+        let conn: Connection = Connection::open_in_memory().unwrap();
+        let mut dao = Dao::new(conn);
+        dao.init().unwrap();
+        dao
+    }
+
+    fn travel() -> impl Strategy<Value = Travel> {
+        let country = prop::sample::select(["USA", "Canada", "Mexico"].as_slice());
+        let city = prop::sample::select(["New York", "Toronto", "Mexico City"].as_slice());
+        let began = prop::sample::select(
+            [
+                "2012-01-01 12:45:04",
+                "2022-02-01 19:00:03",
+                "2024-03-01 00:01:11",
+            ]
+            .as_slice(),
+        );
+        let duration = prop::num::u64::ANY;
+
+        (country, city, began, duration).prop_map(|(country, city, began, duration)| {
+            let began = DateTime::parse_from_str(began, Dao::DT_FORMAT)
+                .unwrap()
+                .to_utc();
+            let ended = began.checked_add_days(Days::new(duration)).unwrap();
+
+            Travel {
+                id: 0,
+                country: country.to_string(),
+                city: city.to_string(),
+                began,
+                ended,
+            }
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn create_and_list(sessions in sessions()) {
+            let session_manager = init();
+
+            for session in sessions.iter() {
+                session_manager.create_session(session.clone()).unwrap();
+            };
+
+            let result = session_manager.list_sessions().unwrap();
+            let diff = sessions.iter().filter(|x| !result.contains(x)).count();
+            let diff2 = result.iter().filter(|x| !sessions.contains(x)).count();
+
+            prop_assert!(diff == 0 && diff2 == 0)
+        }
+    }
+
+    #[test]
+    fn indepotent_init() {
+        let mut session_manager = init();
+        session_manager.init().unwrap();
+        session_manager.init().unwrap();
     }
 }
