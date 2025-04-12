@@ -1,6 +1,6 @@
 use std::str::{self, Utf8Error};
 
-use chrono::{DateTime, ParseError, Utc};
+use chrono::{NaiveDateTime, ParseError};
 use rusqlite::{
     Connection, ToSql,
     types::{FromSql, FromSqlError},
@@ -13,8 +13,17 @@ pub struct Travel {
     pub id: Id,
     pub country: String,
     pub city: String,
-    pub began: DateTime<Utc>,
-    pub ended: DateTime<Utc>,
+    pub began: NaiveDateTime,
+    pub ended: NaiveDateTime,
+}
+
+impl PartialEq for Travel {
+    fn eq(&self, other: &Self) -> bool {
+        self.country == other.country
+            && self.city == other.city
+            && self.began == other.began
+            && self.ended == other.ended
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -22,15 +31,30 @@ pub struct Post {
     pub id: Id,
     pub photos: Vec<Photo>,
     pub text: String,
-    pub began: DateTime<Utc>,
-    pub ended: DateTime<Utc>,
+    pub began: NaiveDateTime,
+    pub ended: NaiveDateTime,
+}
+
+impl PartialEq for Post {
+    fn eq(&self, other: &Self) -> bool {
+        self.photos == other.photos
+            && self.text == other.text
+            && self.began == other.began
+            && self.ended == other.ended
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Photo {
     pub id: Id,
     pub data: Vec<u8>,
-    pub date: DateTime<Utc>,
+    pub date: NaiveDateTime,
+}
+
+impl PartialEq for Photo {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data && self.date == other.date
+    }
 }
 
 struct Dao {
@@ -38,7 +62,7 @@ struct Dao {
 }
 
 impl Dao {
-    const DT_FORMAT: &str = "YYYY-MM-DD HH:MM:SS";
+    const DT_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
     fn new(connection: Connection) -> Self {
         Dao { connection }
@@ -77,7 +101,7 @@ trait WrapperOps: Sized {
     fn wrap(self) -> Wrapper<Self>;
 }
 
-impl WrapperOps for DateTime<Utc> {
+impl WrapperOps for NaiveDateTime {
     fn wrap(self) -> Wrapper<Self> {
         Wrapper { value: self }
     }
@@ -95,16 +119,15 @@ impl Into<FromSqlError> for Wrapper<Utf8Error> {
     }
 }
 
-impl FromSql for Wrapper<DateTime<Utc>> {
+impl FromSql for Wrapper<NaiveDateTime> {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         match value {
             rusqlite::types::ValueRef::Text(text) => {
-                let dt = DateTime::parse_from_str(
+                let dt = NaiveDateTime::parse_from_str(
                     str::from_utf8(text).map_err(|e| Wrapper { value: e }.into())?,
                     Dao::DT_FORMAT,
                 )
-                .map_err(|e| Wrapper { value: e }.into())?
-                .to_utc();
+                .map_err(|e| Wrapper { value: e }.into())?;
 
                 Ok(Wrapper { value: dt })
             }
@@ -113,7 +136,7 @@ impl FromSql for Wrapper<DateTime<Utc>> {
     }
 }
 
-impl ToSql for Wrapper<DateTime<Utc>> {
+impl ToSql for Wrapper<NaiveDateTime> {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
         let str = self.value.format(Dao::DT_FORMAT).to_string();
 
@@ -141,19 +164,19 @@ impl DaoOps for Dao {
         Ok(self.connection.last_insert_rowid())
     }
 
-    fn list_travels(&self, limut: u32, page: u32) -> Res<Vec<Travel>> {
+    fn list_travels(&self, limit: u32, page: u32) -> Res<Vec<Travel>> {
         let mut stmnt = self.connection.prepare(
             "select t.id, t.country, t.city, t.began, t.ended
            from travel t
            order by t.began desc limit ?1 offset ?2",
         )?;
-        let iter = stmnt.query_map([limut, page], |row| {
+        let iter = stmnt.query_map([limit, page * limit], |row| {
             Ok(Travel {
                 id: row.get(0)?,
                 country: row.get(1)?,
                 city: row.get(2)?,
-                began: row.get::<_, Wrapper<DateTime<Utc>>>(3)?.value,
-                ended: row.get::<_, Wrapper<DateTime<Utc>>>(4)?.value,
+                began: row.get::<_, Wrapper<NaiveDateTime>>(3)?.value,
+                ended: row.get::<_, Wrapper<NaiveDateTime>>(4)?.value,
             })
         })?;
 
@@ -187,7 +210,7 @@ impl DaoOps for Dao {
         ))?;
 
         travel_ids.iter().enumerate().fold(Ok(()), |acc, (i, id)| {
-            acc.and_then(|_| statement.raw_bind_parameter(i, id))
+            acc.and_then(|_| statement.raw_bind_parameter(i + 1, id))
         })?;
 
         statement.raw_execute()?;
@@ -207,7 +230,7 @@ impl DaoOps for Dao {
     fn list_posts(&self, travel_id: Id, limit: u32, page: u32) -> Res<Vec<Post>> {
         let mut stmt = self.connection.prepare(
             "SELECT p.id, p.text, p.began, p.ended, ph.id, ph.data, ph.date
-            FROM photo ph RIGHT JOIN (SELECT id, text, began, ended, travel_id FROM post LIMIT ?2 OFFSET ?3 ORDER BY ended DESC) p
+            FROM photo ph RIGHT JOIN (SELECT id, text, began, ended, travel_id FROM post ORDER BY ended DESC LIMIT ?2 OFFSET ?3) p
             ON p.id = ph.post_id
             WHERE p.travel_id = ?1
             ORDER BY p.id"
@@ -221,12 +244,12 @@ impl DaoOps for Dao {
             posts.push(Post {
                 id: row.get(0)?,
                 text: row.get(1)?,
-                began: row.get::<_, Wrapper<DateTime<Utc>>>(2)?.value,
-                ended: row.get::<_, Wrapper<DateTime<Utc>>>(3)?.value,
+                began: row.get::<_, Wrapper<NaiveDateTime>>(2)?.value,
+                ended: row.get::<_, Wrapper<NaiveDateTime>>(3)?.value,
                 photos: vec![Photo {
                     id: row.get(4)?,
                     data: row.get(5)?,
-                    date: row.get::<_, Wrapper<DateTime<Utc>>>(6)?.value,
+                    date: row.get::<_, Wrapper<NaiveDateTime>>(6)?.value,
                 }],
             });
         }
@@ -319,7 +342,7 @@ impl DaoOps for Dao {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Days;
+    use chrono::{Days, NaiveDateTime};
 
     use super::*;
     use {prop::prelude::*, proptest as prop};
@@ -342,12 +365,10 @@ mod tests {
             ]
             .as_slice(),
         );
-        let duration = prop::num::u64::ANY;
+        let duration = prop::sample::select((1..30).collect::<Vec<_>>());
 
         (country, city, began, duration).prop_map(|(country, city, began, duration)| {
-            let began = DateTime::parse_from_str(began, Dao::DT_FORMAT)
-                .unwrap()
-                .to_utc();
+            let began = NaiveDateTime::parse_from_str(began, Dao::DT_FORMAT).unwrap();
             let ended = began.checked_add_days(Days::new(duration)).unwrap();
 
             Travel {
@@ -360,21 +381,116 @@ mod tests {
         })
     }
 
+    fn post() -> impl Strategy<Value = Post> {
+        let text = prop::string::string_regex("\\w{20,100}").unwrap();
+        let began = prop::sample::select(
+            [
+                "2012-01-01 12:45:04",
+                "2022-02-01 19:00:03",
+                "2024-03-01 00:01:11",
+            ]
+            .as_slice(),
+        );
+
+        let duration = prop::sample::select((1..30).collect::<Vec<_>>());
+
+        (text, began, duration).prop_map(|(text, began, duration)| {
+            let began = NaiveDateTime::parse_from_str(began, Dao::DT_FORMAT).unwrap();
+            let ended = began.checked_add_days(Days::new(duration)).unwrap();
+
+            Post {
+                id: 0,
+                photos: vec![],
+                text: text.to_string(),
+                began,
+                ended,
+            }
+        })
+    }
+
+    fn photo() -> impl Strategy<Value = Photo> {
+        let data = prop::string::bytes_regex(".{100, 200}").unwrap();
+        let date = prop::sample::select(
+            [
+                "2012-01-01 12:45:04",
+                "2022-02-01 19:00:03",
+                "2024-03-01 00:01:11",
+            ]
+            .as_slice(),
+        );
+
+        (data, date).prop_map(|(data, date)| {
+            let date = NaiveDateTime::parse_from_str(date, Dao::DT_FORMAT).unwrap();
+
+            Photo { id: 0, data, date }
+        })
+    }
+
+    fn vec_gen<T: Strategy>(value: T) -> impl Strategy<Value = Vec<T::Value>> {
+        prop::collection::vec(value, 10)
+    }
+
     proptest! {
         #[test]
-        fn create_and_list(sessions in sessions()) {
-            let session_manager = init();
+        fn create_and_list(travels in vec_gen(travel())) {
+            let dao = init();
 
-            for session in sessions.iter() {
-                session_manager.create_session(session.clone()).unwrap();
+            for travel in travels.iter() {
+                dao.add_travel(travel.clone()).unwrap();
             };
 
-            let result = session_manager.list_sessions().unwrap();
-            let diff = sessions.iter().filter(|x| !result.contains(x)).count();
-            let diff2 = result.iter().filter(|x| !sessions.contains(x)).count();
+            let result = dao.list_travels(10,0).unwrap();
+            let diff = travels.iter().filter(|x| !result.contains(x)).count();
+            let diff2 = result.iter().filter(|x| !travels.contains(x)).count();
 
             prop_assert!(diff == 0 && diff2 == 0)
         }
+
+        #[test]
+        fn create_and_update_travel(travel in travel(), travel2 in travel()) {
+            let dao = init();
+
+            dao.add_travel(travel.clone()).unwrap();
+
+            let updated = Travel {
+                id: 1,
+                ..travel2
+            };
+            dao.update_travel(updated.clone()).unwrap();
+
+            let res = dao.list_travels(1, 0).unwrap();
+
+            prop_assert_eq!(res, vec![updated])
+        }
+
+        #[test]
+        fn create_and_delete_travel(travel in travel()) {
+            let dao = init();
+
+            dao.add_travel(travel.clone()).unwrap();
+
+            dao.delete_travels(vec![1]).unwrap();
+
+            let res = dao.list_travels(1, 0).unwrap();
+
+            prop_assert_eq!(res, vec![])
+        }
+
+        #[test]
+        fn add_post_to_travel(travel in travel(), posts in vec_gen(post())) {
+            let dao = init();
+
+            dao.add_travel(travel.clone()).unwrap();
+
+            for post in posts.clone() {
+                dao.add_post_to_travel(1, post.clone()).unwrap();
+            }
+
+            let res = dao.list_posts(1, 10, 0).unwrap();
+
+            prop_assert_eq!(res, posts)
+        }
+
     }
 
     #[test]

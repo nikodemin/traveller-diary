@@ -3,7 +3,6 @@ mod model;
 
 use anyhow::anyhow;
 use config::Config;
-use egui::menu::menu_button;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use model::{AppState, Event};
