@@ -241,16 +241,23 @@ impl DaoOps for Dao {
         let mut posts = Vec::new();
 
         while let Some(row) = rows.next()? {
+            let photo_id: Option<Id> = row.get(4)?;
+            let photo_data: Option<Vec<u8>> = row.get(5)?;
+            let photo_date: Option<NaiveDateTime> = row
+                .get::<_, Option<Wrapper<NaiveDateTime>>>(6)?
+                .map(|x| x.value);
+
+            let photos = match (photo_id, photo_data, photo_date) {
+                (Some(id), Some(data), Some(date)) => vec![Photo { id, data, date }],
+                _ => vec![],
+            };
+
             posts.push(Post {
                 id: row.get(0)?,
                 text: row.get(1)?,
                 began: row.get::<_, Wrapper<NaiveDateTime>>(2)?.value,
                 ended: row.get::<_, Wrapper<NaiveDateTime>>(3)?.value,
-                photos: vec![Photo {
-                    id: row.get(4)?,
-                    data: row.get(5)?,
-                    date: row.get::<_, Wrapper<NaiveDateTime>>(6)?.value,
-                }],
+                photos,
             });
         }
 
@@ -277,7 +284,7 @@ impl DaoOps for Dao {
 
     fn update_post(&self, post: Post) -> Res<()> {
         self.connection.execute(
-            "UPDATE posts SET text = ?, began = ?, ended = ? WHERE id = ?",
+            "UPDATE post SET text = ?, began = ?, ended = ? WHERE id = ?",
             (post.text, post.began.wrap(), post.ended.wrap(), post.id),
         )?;
 
@@ -292,10 +299,10 @@ impl DaoOps for Dao {
 
         let mut statement = self
             .connection
-            .prepare(&format!("delete from posts where id IN ({})", placeholders))?;
+            .prepare(&format!("delete from post where id IN ({})", placeholders))?;
 
         post_ids.iter().enumerate().fold(Ok(()), |acc, (i, id)| {
-            acc.and_then(|_| statement.raw_bind_parameter(i, id))
+            acc.and_then(|_| statement.raw_bind_parameter(i + 1, id))
         })?;
 
         statement.raw_execute()?;
@@ -314,10 +321,12 @@ impl DaoOps for Dao {
         ))?;
 
         photos.iter().enumerate().fold(Ok(()), |acc, (i, photo)| {
-            acc.and_then(|_| statement.raw_bind_parameter(i * 3, post_id))
-                .and_then(|_| statement.raw_bind_parameter(i * 3 + 1, photo.data.clone()))
-                .and_then(|_| statement.raw_bind_parameter(i * 3 + 2, photo.date.wrap()))
+            acc.and_then(|_| statement.raw_bind_parameter(i * 3 + 1, post_id))
+                .and_then(|_| statement.raw_bind_parameter(i * 3 + 2, photo.data.clone()))
+                .and_then(|_| statement.raw_bind_parameter(i * 3 + 3, photo.date.wrap()))
         })?;
+
+        statement.raw_execute()?;
 
         Ok(())
     }
@@ -333,8 +342,10 @@ impl DaoOps for Dao {
             .prepare(&format!("delete from photo where id IN ({})", placeholders))?;
 
         photo_ids.iter().enumerate().fold(Ok(()), |acc, (i, id)| {
-            acc.and_then(|_| statement.raw_bind_parameter(i, id))
+            acc.and_then(|_| statement.raw_bind_parameter(i + 1, id))
         })?;
+
+        statement.raw_execute()?;
 
         Ok(())
     }
@@ -450,10 +461,10 @@ mod tests {
         fn create_and_update_travel(travel in travel(), travel2 in travel()) {
             let dao = init();
 
-            dao.add_travel(travel.clone()).unwrap();
+            let travel_id = dao.add_travel(travel.clone()).unwrap();
 
             let updated = Travel {
-                id: 1,
+                id: travel_id,
                 ..travel2
             };
             dao.update_travel(updated.clone()).unwrap();
@@ -467,9 +478,9 @@ mod tests {
         fn create_and_delete_travel(travel in travel()) {
             let dao = init();
 
-            dao.add_travel(travel.clone()).unwrap();
+            let travel_id = dao.add_travel(travel.clone()).unwrap();
 
-            dao.delete_travels(vec![1]).unwrap();
+            dao.delete_travels(vec![travel_id]).unwrap();
 
             let res = dao.list_travels(1, 0).unwrap();
 
@@ -489,6 +500,89 @@ mod tests {
             let res = dao.list_posts(1, 10, 0).unwrap();
 
             prop_assert_eq!(res, posts)
+        }
+
+        #[test]
+        fn add_and_delete_posts(travel in travel(), posts in vec_gen(post())) {
+            let dao = init();
+
+            dao.add_travel(travel.clone()).unwrap();
+
+            for post in posts.clone() {
+                dao.add_post_to_travel(1, post.clone()).unwrap();
+            }
+            let post_ids = (1..11).collect::<Vec<_>>();
+            dao.delete_posts(post_ids).unwrap();
+
+            let res = dao.list_posts(1, 10, 0).unwrap();
+
+            prop_assert_eq!(res, vec![])
+        }
+
+        #[test]
+        fn list_travel_with_pagination(travels in vec_gen(travel())) {
+            let dao = init();
+
+            for travel in travels.clone() {
+                dao.add_travel(travel.clone()).unwrap();
+            };
+
+            let res = (0..5).flat_map(|page| dao.list_travels(3, page).unwrap()).collect::<Vec<_>>();
+
+            let diff = travels.iter().filter(|x| !res.contains(x)).count();
+            let diff2 = res.iter().filter(|x| !travels.contains(x)).count();
+
+            prop_assert!(diff == 0 && diff2 == 0)
+        }
+
+        #[test]
+        fn create_and_update_post(travel in travel(), post in post(), updated_post in post()) {
+            let dao = init();
+
+            let travel_id = dao.add_travel(travel.clone()).unwrap();
+            let post_id = dao.add_post_to_travel(travel_id, post.clone()).unwrap();
+
+            let updated_post = Post {
+                id: post_id,
+                ..updated_post
+            };
+            dao.update_post(updated_post.clone()).unwrap();
+
+            let res = dao.list_posts(travel_id, 2, 0).unwrap();
+
+            prop_assert_eq!(res, vec![updated_post])
+        }
+
+        #[test]
+        fn add_photos_to_post(travel in travel(), post in post(), photos in vec_gen(photo())) {
+            let dao = init();
+
+            let travel_id = dao.add_travel(travel.clone()).unwrap();
+            let post_id = dao.add_post_to_travel(travel_id, post.clone()).unwrap();
+
+            dao.add_photos_to_post(post_id, photos.clone()).unwrap();
+
+            let posts = dao.list_posts(travel_id, 2, 0).unwrap();
+            let res = posts.iter().flat_map(|x| x.photos.clone()).collect::<Vec<_>>();
+
+            prop_assert_eq!(res, photos)
+        }
+
+        #[test]
+        fn add_and_delete_photos_to_post(travel in travel(), post in post(), photos in vec_gen(photo())) {
+            let dao = init();
+
+            let travel_id = dao.add_travel(travel.clone()).unwrap();
+            let post_id = dao.add_post_to_travel(travel_id, post.clone()).unwrap();
+
+            dao.add_photos_to_post(post_id, photos.clone()).unwrap();
+            let photo_ids = (1..11).collect::<Vec<_>>();
+            dao.delete_photos(photo_ids).unwrap();
+
+            let posts = dao.list_posts(travel_id, 2, 0).unwrap();
+            let res = posts.iter().flat_map(|x| x.photos.clone()).collect::<Vec<_>>();
+
+            prop_assert_eq!(res, vec![])
         }
 
     }
