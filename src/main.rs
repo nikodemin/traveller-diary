@@ -3,6 +3,7 @@ mod model;
 
 use anyhow::anyhow;
 use config::Config;
+use egui::Rangef;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use model::{AppState, Event};
@@ -53,39 +54,22 @@ impl eframe::App for DiaryApp {
             .get_table(&self.state.language)
             .unwrap();
 
+        let get_loc_str = |name: &str| {
+            localization_conf
+                .get(name)
+                .unwrap()
+                .clone()
+                .into_string()
+                .unwrap()
+        };
+
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                let file_str = localization_conf
-                    .get("file_menu")
-                    .unwrap()
-                    .clone()
-                    .into_string()
-                    .unwrap();
-                let new_travel_str = localization_conf
-                    .get("new_travel_btn")
-                    .unwrap()
-                    .clone()
-                    .into_string()
-                    .unwrap();
+                let file_str = get_loc_str("file_menu");
+                let new_travel_str = get_loc_str("new_travel_btn");
+                let settings_str = get_loc_str("settings_menu");
+                let change_language_str = get_loc_str("change_language_menu");
 
-                let file_menu = ui.menu_button(file_str, |ui| {
-                    if ui.button(new_travel_str).clicked() {
-                        println!("new travel")
-                    }
-                });
-
-                let settings_str = localization_conf
-                    .get("settings_menu")
-                    .unwrap()
-                    .clone()
-                    .into_string()
-                    .unwrap();
-                let change_language_str = localization_conf
-                    .get("change_language_menu")
-                    .unwrap()
-                    .clone()
-                    .into_string()
-                    .unwrap();
                 let languages = self
                     .settings_conf
                     .get_array("languages")
@@ -94,7 +78,13 @@ impl eframe::App for DiaryApp {
                     .flat_map(|x| x.clone().into_string())
                     .collect::<Vec<_>>();
 
-                let settings_menu = ui.menu_button(settings_str, |ui| {
+                ui.menu_button(file_str, |ui| {
+                    if ui.button(new_travel_str).clicked() {
+                        println!("new travel")
+                    }
+                });
+
+                ui.menu_button(settings_str, |ui| {
                     ui.menu_button(change_language_str, |ui| {
                         languages.iter().for_each(|l| {
                             if ui.button(l).clicked() {
@@ -106,9 +96,6 @@ impl eframe::App for DiaryApp {
                         })
                     })
                 });
-
-                file_menu;
-                settings_menu;
             });
         });
 
@@ -126,13 +113,18 @@ impl eframe::App for DiaryApp {
             .unwrap() as f32;
 
         egui::SidePanel::left("travels_panel")
-            .default_width(travels_panel_default_width)
             .resizable(true)
-            .min_width(travels_panel_min_width)
-            .max_width(travels_panel_max_width)
-            .show(ctx, |ui| {});
+            .default_width(travels_panel_default_width)
+            .width_range(travels_panel_min_width..=travels_panel_max_width)
+            .show(ctx, |ui| {
+                ui.label("Resizable Side Panelsd djdsdjlkdsjdksfjljdsjdlsjdkjdjdsdjlkdsjdksfjljdsjdlsjdkjdsldsjdjdsdjlkdsjdksfjljdsjdlsjdkjdsldsjdsldsj!");
+                // Add a widget that can expand, e.g.:
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    // Your content here
+                });
+            });
 
-        egui::CentralPanel::default().show(ctx, |ui| {});
+        //egui::CentralPanel::default().show(ctx, |ui| {});
     }
 }
 
