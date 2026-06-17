@@ -1,83 +1,34 @@
 use std::str::{self, Utf8Error};
 
+use crate::model::{Id, Photo, Post, Travel};
 use chrono::{NaiveDateTime, ParseError};
 use rusqlite::{
-    Connection, ToSql,
+    Connection, Row, RowIndex, ToSql,
     types::{FromSql, FromSqlError},
 };
 
-type Id = i64;
-
-#[derive(Debug, Clone)]
-pub struct Travel {
-    pub id: Id,
-    pub country: String,
-    pub city: String,
-    pub began: NaiveDateTime,
-    pub ended: NaiveDateTime,
-}
-
-impl PartialEq for Travel {
-    fn eq(&self, other: &Self) -> bool {
-        self.country == other.country
-            && self.city == other.city
-            && self.began == other.began
-            && self.ended == other.ended
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Post {
-    pub id: Id,
-    pub photos: Vec<Photo>,
-    pub text: String,
-    pub began: NaiveDateTime,
-    pub ended: NaiveDateTime,
-}
-
-impl PartialEq for Post {
-    fn eq(&self, other: &Self) -> bool {
-        self.photos == other.photos
-            && self.text == other.text
-            && self.began == other.began
-            && self.ended == other.ended
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Photo {
-    pub id: Id,
-    pub data: Vec<u8>,
-    pub date: NaiveDateTime,
-}
-
-impl PartialEq for Photo {
-    fn eq(&self, other: &Self) -> bool {
-        self.data == other.data && self.date == other.date
-    }
-}
-
-struct Dao {
+pub struct Dao {
     connection: Connection,
 }
 
 impl Dao {
     const DT_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
-    fn new(connection: Connection) -> Self {
+    pub fn new(connection: Connection) -> Self {
         Dao { connection }
     }
 }
 
 type Res<T> = Result<T, rusqlite::Error>;
 
-trait DaoOps {
+pub trait DaoOps {
     fn init(&mut self) -> Result<(), refinery::Error>;
 
     fn add_travel(&self, travel: Travel) -> Res<Id>;
-    fn list_travels(&self, limut: u32, page: u32) -> Res<Vec<Travel>>;
+    fn list_travels(&self, limit: u32, page: u32) -> Res<Vec<Travel>>;
     fn update_travel(&self, travel: Travel) -> Res<()>;
     fn delete_travels(&self, travel_ids: Vec<Id>) -> Res<()>;
+    fn set_travel_cover(&self, travel_id: Id, photo_id: Id) -> Res<()>;
 
     fn add_post_to_travel(&self, travel_id: Id, post: Post) -> Res<Id>;
     fn list_posts(&self, travel_id: Id, limit: u32, page: u32) -> Res<Vec<Post>>;
@@ -104,6 +55,37 @@ trait WrapperOps: Sized {
 impl WrapperOps for NaiveDateTime {
     fn wrap(self) -> Wrapper<Self> {
         Wrapper { value: self }
+    }
+}
+
+trait SqlOps<'a> {
+    fn get_wr<T>(&'a self, index: usize) -> Res<T>
+    where
+        T: 'a,
+        Wrapper<T>: FromSql;
+
+    fn get_wr_opt<T>(&'a self, index: usize) -> Res<Option<T>>
+    where
+        T: 'a,
+        Wrapper<T>: FromSql;
+}
+
+impl<'a> SqlOps<'a> for Row<'a> {
+    fn get_wr<T>(&self, index: usize) -> Res<T>
+    where
+        T: 'a,
+        Wrapper<T>: FromSql,
+    {
+        self.get::<usize, Wrapper<T>>(index).map(|e| e.value)
+    }
+
+    fn get_wr_opt<T>(&self, index: usize) -> Res<Option<T>>
+    where
+        T: 'a,
+        Wrapper<T>: FromSql,
+    {
+        self.get::<usize, Option<Wrapper<T>>>(index)
+            .map(|e| e.map(|e2| e2.value))
     }
 }
 
@@ -166,17 +148,28 @@ impl DaoOps for Dao {
 
     fn list_travels(&self, limit: u32, page: u32) -> Res<Vec<Travel>> {
         let mut stmnt = self.connection.prepare(
-            "select t.id, t.country, t.city, t.began, t.ended
-           from travel t
+            "select t.id, t.country, t.city, t.began, t.ended, p.id, p.date, p.data
+           from travel t left join photo p ON t.photo_id = p.id
            order by t.began desc limit ?1 offset ?2",
         )?;
         let iter = stmnt.query_map([limit, page * limit], |row| {
+            let photo_id: Option<Id> = row.get(5)?;
+            let photo_date: Option<NaiveDateTime> = row.get_wr_opt(6)?;
+            let photo_data: Option<Vec<u8>> = row.get(7)?;
+
+            let photo = photo_id.zip(photo_date).zip(photo_data).map(|e| Photo {
+                id: e.0.0,
+                data: e.1,
+                date: e.0.1,
+            });
+
             Ok(Travel {
                 id: row.get(0)?,
                 country: row.get(1)?,
                 city: row.get(2)?,
-                began: row.get::<_, Wrapper<NaiveDateTime>>(3)?.value,
-                ended: row.get::<_, Wrapper<NaiveDateTime>>(4)?.value,
+                began: row.get_wr::<NaiveDateTime>(3)?,
+                ended: row.get_wr::<NaiveDateTime>(4)?,
+                cover: photo,
             })
         })?;
 
@@ -218,10 +211,19 @@ impl DaoOps for Dao {
         Ok(())
     }
 
+    fn set_travel_cover(&self, travel_id: Id, photo_id: Id) -> Res<()> {
+        self.connection
+            .execute(
+                "UPDATE travel SET photo_id = ?1 WHERE id = ?2",
+                (photo_id, travel_id),
+            )
+            .map(|_| ())
+    }
+
     fn add_post_to_travel(&self, travel_id: Id, post: Post) -> Res<Id> {
         self.connection.execute(
-            "INSERT INTO post (id, travel_id, text, began, ended) VALUES (null, ?1, ?2, ?3, ?4)",
-            (travel_id, post.text, post.began.wrap(), post.ended.wrap()),
+            "INSERT INTO post (id, travel_id, text, created) VALUES (null, ?1, ?2, ?3)",
+            (travel_id, post.text, post.created.wrap()),
         )?;
 
         Ok(self.connection.last_insert_rowid())
@@ -229,8 +231,8 @@ impl DaoOps for Dao {
 
     fn list_posts(&self, travel_id: Id, limit: u32, page: u32) -> Res<Vec<Post>> {
         let mut stmt = self.connection.prepare(
-            "SELECT p.id, p.text, p.began, p.ended, ph.id, ph.data, ph.date
-            FROM photo ph RIGHT JOIN (SELECT id, text, began, ended, travel_id FROM post ORDER BY ended DESC LIMIT ?2 OFFSET ?3) p
+            "SELECT p.id, p.text, p.created, ph.id, ph.data, ph.date
+            FROM photo ph RIGHT JOIN (SELECT id, text, created, travel_id FROM post ORDER BY created DESC LIMIT ?2 OFFSET ?3) p
             ON p.id = ph.post_id
             WHERE p.travel_id = ?1
             ORDER BY p.id"
@@ -241,11 +243,9 @@ impl DaoOps for Dao {
         let mut posts = Vec::new();
 
         while let Some(row) = rows.next()? {
-            let photo_id: Option<Id> = row.get(4)?;
-            let photo_data: Option<Vec<u8>> = row.get(5)?;
-            let photo_date: Option<NaiveDateTime> = row
-                .get::<_, Option<Wrapper<NaiveDateTime>>>(6)?
-                .map(|x| x.value);
+            let photo_id: Option<Id> = row.get(3)?;
+            let photo_data: Option<Vec<u8>> = row.get(4)?;
+            let photo_date: Option<NaiveDateTime> = row.get_wr_opt(5)?;
 
             let photos = match (photo_id, photo_data, photo_date) {
                 (Some(id), Some(data), Some(date)) => vec![Photo { id, data, date }],
@@ -255,8 +255,7 @@ impl DaoOps for Dao {
             posts.push(Post {
                 id: row.get(0)?,
                 text: row.get(1)?,
-                began: row.get::<_, Wrapper<NaiveDateTime>>(2)?.value,
-                ended: row.get::<_, Wrapper<NaiveDateTime>>(3)?.value,
+                created: row.get_wr(2)?,
                 photos,
             });
         }
@@ -284,8 +283,8 @@ impl DaoOps for Dao {
 
     fn update_post(&self, post: Post) -> Res<()> {
         self.connection.execute(
-            "UPDATE post SET text = ?, began = ?, ended = ? WHERE id = ?",
-            (post.text, post.began.wrap(), post.ended.wrap(), post.id),
+            "UPDATE post SET text = ?, created = ? WHERE id = ?",
+            (post.text, post.created.wrap(), post.id),
         )?;
 
         Ok(())
@@ -388,6 +387,7 @@ mod tests {
                 city: city.to_string(),
                 began,
                 ended,
+                cover: None,
             }
         })
     }
@@ -403,18 +403,14 @@ mod tests {
             .as_slice(),
         );
 
-        let duration = prop::sample::select((1..30).collect::<Vec<_>>());
-
-        (text, began, duration).prop_map(|(text, began, duration)| {
-            let began = NaiveDateTime::parse_from_str(began, Dao::DT_FORMAT).unwrap();
-            let ended = began.checked_add_days(Days::new(duration)).unwrap();
+        (text, began).prop_map(|(text, created)| {
+            let created = NaiveDateTime::parse_from_str(created, Dao::DT_FORMAT).unwrap();
 
             Post {
                 id: 0,
                 photos: vec![],
                 text: text.to_string(),
-                began,
-                ended,
+                created,
             }
         })
     }
@@ -497,9 +493,9 @@ mod tests {
                 dao.add_post_to_travel(1, post.clone()).unwrap();
             }
 
-            let res = dao.list_posts(1, 10, 0).unwrap();
+            let res = dao.list_posts(1, 10, 0);
 
-            prop_assert_eq!(res, posts)
+            prop_assert_eq!(res.unwrap(), posts)
         }
 
         #[test]

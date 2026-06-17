@@ -3,14 +3,15 @@ CREATE TABLE IF NOT EXISTS travel (
     country VARCHAR(200),
     city VARCHAR(200),
     began TIMESTAMP,
-    ended TIMESTAMP
+    ended TIMESTAMP,
+    photo_id INTEGER,
+    FOREIGN KEY (photo_id) REFERENCES photo (id)
 );
 
 CREATE TABLE IF NOT EXISTS post (
     id INTEGER PRIMARY KEY,
     text VARCHAR,
-    began TIMESTAMP,
-    ended TIMESTAMP,
+    created TIMESTAMP,
     travel_id INTEGER,
     FOREIGN KEY (travel_id) REFERENCES travel (id)
 );

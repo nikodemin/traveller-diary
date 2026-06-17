@@ -1,25 +1,28 @@
+mod backend;
 mod dao;
 mod model;
 
+use crate::backend::Backend;
+use crate::dao::Dao;
+use crate::model::Response;
 use anyhow::anyhow;
 use config::Config;
-use egui::Rangef;
+use model::{AppState, Cmd};
+use rusqlite::Connection;
 use std::sync::mpsc::{Receiver, Sender, channel};
-
-use model::{AppState, Event};
 
 struct DiaryApp {
     state: AppState,
-    background_event_sender: Sender<Event>,
-    event_receiver: Receiver<Event>,
+    event_sender: Sender<Cmd>,
+    event_receiver: Receiver<Response>,
     localization_conf: Config,
     settings_conf: Config,
 }
 
 impl DiaryApp {
     fn new(
-        background_event_sender: Sender<Event>,
-        event_receiver: Receiver<Event>,
+        event_sender: Sender<Cmd>,
+        event_receiver: Receiver<Response>,
         localization_conf: Config,
         settings_conf: Config,
     ) -> Result<Box<Self>, Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -29,26 +32,16 @@ impl DiaryApp {
             state: AppState {
                 language: default_language,
             },
-            background_event_sender,
+            event_sender,
             event_receiver,
             localization_conf,
             settings_conf,
         }))
     }
-
-    fn handle_gui_events(&mut self) {
-        while let Ok(event) = self.event_receiver.try_recv() {
-            match event {
-                Event::ChangeLanguage => todo!(),
-            }
-        }
-    }
 }
 
 impl eframe::App for DiaryApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.handle_gui_events();
-
         let localization_conf = self
             .localization_conf
             .get_table(&self.state.language)
@@ -118,38 +111,35 @@ impl eframe::App for DiaryApp {
             .width_range(travels_panel_min_width..=travels_panel_max_width)
             .show(ctx, |ui| {
                 ui.label("Resizable Side Panelsd djdsdjlkdsjdksfjljdsjdlsjdkjdjdsdjlkdsjdksfjljdsjdlsjdkjdsldsjdjdsdjlkdsjdksfjljdsjdlsjdkjdsldsjdsldsj!");
-                // Add a widget that can expand, e.g.:
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    // Your content here
                 });
             });
 
-        //egui::CentralPanel::default().show(ctx, |ui| {});
+        egui::CentralPanel::default().show(ctx, |ui| {});
     }
 }
 
 fn main() -> Result<(), anyhow::Error> {
-    let (background_event_sender, background_event_receiver) = channel::<Event>();
-    let (event_sender, event_receiver) = channel::<Event>();
+    let (cmd_sender, cmd_receiver) = channel::<Cmd>();
+    let (rsp_sender, rsp_receiver) = channel::<Response>();
 
     let localization_conf = Config::builder()
         .add_source(config::File::with_name("localization.toml"))
-        .build()
-        .unwrap();
+        .build()?;
     let settings_conf = Config::builder()
         .add_source(config::File::with_name("settings.toml"))
-        .build()
-        .unwrap();
+        .build()?;
+
+    let conn = Connection::open("traveller_diary.db")?;
+    let dao = Dao::new(conn);
 
     std::thread::spawn(move || {
-        while let Ok(event) = background_event_receiver.recv() {
-            let sender = event_sender.clone();
-            handle_events(event, sender);
-        }
+        let backend = Backend::new(dao, rsp_sender, cmd_receiver);
+        backend.serve()
     });
 
-    let window_init_size_x = settings_conf.get_float("window_init_size_x").unwrap() as f32;
-    let window_init_size_y = settings_conf.get_float("window_init_size_y").unwrap() as f32;
+    let window_init_size_x = settings_conf.get_float("window_init_size_x")? as f32;
+    let window_init_size_y = settings_conf.get_float("window_init_size_y")? as f32;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -162,16 +152,9 @@ fn main() -> Result<(), anyhow::Error> {
         options,
         Box::new(|context| {
             egui_extras::install_image_loaders(&context.egui_ctx);
-            DiaryApp::new(
-                background_event_sender,
-                event_receiver,
-                localization_conf,
-                settings_conf,
-            )
-            .map(|app| app as Box<dyn eframe::App>)
+            DiaryApp::new(cmd_sender, rsp_receiver, localization_conf, settings_conf)
+                .map(|app| app as Box<dyn eframe::App>)
         }),
     )
     .map_err(|e| anyhow!("eframe error: {}", e))
 }
-
-fn handle_events(event: Event, sender: Sender<Event>) {}
