@@ -4,11 +4,14 @@ mod model;
 
 use crate::backend::Backend;
 use crate::dao::Dao;
-use crate::model::Response;
+use crate::model::{Response, Travel};
 use anyhow::anyhow;
+use chrono::NaiveDateTime;
 use config::Config;
 use model::{AppState, Cmd};
+use refinery::{Migration, Runner};
 use rusqlite::Connection;
+use rust_embed::Embed;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 struct DiaryApp {
@@ -31,6 +34,7 @@ impl DiaryApp {
         Ok(Box::new(DiaryApp {
             state: AppState {
                 language: default_language,
+                travels: Vec::new(),
             },
             event_sender,
             event_receiver,
@@ -38,10 +42,20 @@ impl DiaryApp {
             settings_conf,
         }))
     }
+
+    fn handle_events(&mut self) {
+        match self.event_receiver.try_recv() {
+            Ok(Response::LoadTravels { .. }) => {}
+            Ok(Response::AddTravel { id }) => self.state.travels.push(id.to_string()),
+            _ => (),
+        }
+    }
 }
 
 impl eframe::App for DiaryApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.handle_events();
+
         let localization_conf = self
             .localization_conf
             .get_table(&self.state.language)
@@ -73,6 +87,26 @@ impl eframe::App for DiaryApp {
 
                 ui.menu_button(file_str, |ui| {
                     if ui.button(new_travel_str).clicked() {
+                        self.event_sender
+                            .send(Cmd::AddTravel {
+                                travel: Travel {
+                                    id: 0,
+                                    country: "USA".into(),
+                                    city: "Las Vegas".into(),
+                                    began: NaiveDateTime::parse_from_str(
+                                        "2026-03-14 12:00",
+                                        "%Y-%m-%d %H:%M",
+                                    )
+                                    .unwrap(),
+                                    ended: NaiveDateTime::parse_from_str(
+                                        "2026-03-21 11:00",
+                                        "%Y-%m-%d %H:%M",
+                                    )
+                                    .unwrap(),
+                                    cover: None,
+                                },
+                            })
+                            .unwrap();
                         println!("new travel")
                     }
                 });
@@ -83,7 +117,7 @@ impl eframe::App for DiaryApp {
                             if ui.button(l).clicked() {
                                 self.state = AppState {
                                     language: l.to_owned(),
-                                    ..self.state
+                                    ..self.state.clone()
                                 }
                             }
                         })
@@ -110,14 +144,17 @@ impl eframe::App for DiaryApp {
             .default_width(travels_panel_default_width)
             .width_range(travels_panel_min_width..=travels_panel_max_width)
             .show(ctx, |ui| {
-                ui.label("Resizable Side Panelsd djdsdjlkdsjdksfjljdsjdlsjdkjdjdsdjlkdsjdksfjljdsjdlsjdkjdsldsjdjdsdjlkdsjdksfjljdsjdlsjdkjdsldsjdsldsj!");
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                });
+                ui.label(self.state.travels.iter().fold(String::new(), |x, y| x + y));
+                egui::ScrollArea::vertical().show(ui, |ui| {});
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {});
     }
 }
+
+#[derive(Embed)]
+#[folder = "migrations/"]
+struct Migrations;
 
 fn main() -> Result<(), anyhow::Error> {
     let (cmd_sender, cmd_receiver) = channel::<Cmd>();
@@ -130,7 +167,19 @@ fn main() -> Result<(), anyhow::Error> {
         .add_source(config::File::with_name("settings.toml"))
         .build()?;
 
-    let conn = Connection::open("traveller_diary.db")?;
+    let mut conn = Connection::open("traveller_diary.db")?;
+    let migrations: Vec<Migration> = Migrations::iter()
+        .flat_map(|path| Migrations::get(path.as_ref()).map(|f| (path, f)))
+        .map(|(p, f)| {
+            Migration::unapplied(
+                p.as_ref(),
+                String::from_utf8(f.data.into()).unwrap().as_str(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let runner = Runner::new(&migrations);
+    runner.run(&mut conn)?;
     let dao = Dao::new(conn);
 
     std::thread::spawn(move || {

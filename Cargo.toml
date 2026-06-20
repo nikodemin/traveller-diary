@@ -14,3 +14,4 @@ refinery = { version = ">=0.8.16", features = ["rusqlite"] }
 rusqlite = { version = ">=0.30.0", features = ["bundled"] }
 proptest = ">=1.0.0"
 log = "0.4.32"
+rust-embed = "8.11.0"

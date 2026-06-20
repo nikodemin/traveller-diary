@@ -3,14 +3,17 @@ use chrono::prelude::*;
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub language: String,
+    pub travels: Vec<String>,
 }
 
 pub enum Cmd {
     LoadTravels { limit: u32, page: u32 },
+    AddTravel { travel: Travel },
 }
 
 pub enum Response {
     LoadTravels { page: u32, travels: Vec<Travel> },
+    AddTravel { id: Id },
 }
 pub type Id = i64;
 #[derive(Debug, Clone)]

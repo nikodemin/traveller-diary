@@ -29,6 +29,10 @@ impl<Dao: DaoOps> Backend<Dao> {
                         .unwrap(),
                     Err(err) => log!(Level::Error, "failed to list travels, err: {}", err),
                 },
+                Cmd::AddTravel { travel } => match self.dao.add_travel(travel) {
+                    Ok(id) => self.rsp_sender.send(Response::AddTravel { id }).unwrap(),
+                    Err(err) => log!(Level::Error, "failed to add travel, err: {}", err),
+                },
             }
         }
         log!(Level::Error, "Serve loop exit, channel disconnected.");
