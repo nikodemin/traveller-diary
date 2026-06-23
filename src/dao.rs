@@ -26,9 +26,12 @@ pub trait DaoOps {
 
     fn add_travel(&self, travel: Travel) -> Res<Id>;
     fn list_travels(&self, limit: u32, page: u32) -> Res<Vec<Travel>>;
+    fn list_travels_by_year(&self, year: u32) -> Res<Vec<Travel>>;
     fn update_travel(&self, travel: Travel) -> Res<()>;
     fn delete_travels(&self, travel_ids: Vec<Id>) -> Res<()>;
     fn set_travel_cover(&self, travel_id: Id, photo_id: Id) -> Res<()>;
+
+    fn list_travel_years(&self) -> Res<Vec<u32>>;
 
     fn add_post_to_travel(&self, travel_id: Id, post: Post) -> Res<Id>;
     fn list_posts(&self, travel_id: Id, limit: u32, page: u32) -> Res<Vec<Post>>;
@@ -176,6 +179,37 @@ impl DaoOps for Dao {
         iter.collect()
     }
 
+    fn list_travels_by_year(&self, year: u32) -> Res<Vec<Travel>> {
+        let mut stmnt = self.connection.prepare(
+            "select t.id, t.country, t.city, t.began, t.ended, p.id, p.date, p.data
+           from travel t left join photo p ON t.photo_id = p.id
+           where CAST(strftime('%Y', t.began) AS INTEGER) = ?1
+           order by t.began desc",
+        )?;
+        let iter = stmnt.query_map([year], |row| {
+            let photo_id: Option<Id> = row.get(5)?;
+            let photo_date: Option<NaiveDateTime> = row.get_wr_opt(6)?;
+            let photo_data: Option<Vec<u8>> = row.get(7)?;
+
+            let photo = photo_id.zip(photo_date).zip(photo_data).map(|e| Photo {
+                id: e.0.0,
+                data: e.1,
+                date: e.0.1,
+            });
+
+            Ok(Travel {
+                id: row.get(0)?,
+                country: row.get(1)?,
+                city: row.get(2)?,
+                began: row.get_wr::<NaiveDateTime>(3)?,
+                ended: row.get_wr::<NaiveDateTime>(4)?,
+                cover: photo,
+            })
+        })?;
+
+        iter.collect()
+    }
+
     fn update_travel(&self, travel: Travel) -> Res<()> {
         self.connection.execute(
             "UPDATE travel SET country = ?1, city = ?2, began = ?3, ended = ?4 WHERE id = ?5",
@@ -218,6 +252,13 @@ impl DaoOps for Dao {
                 (photo_id, travel_id),
             )
             .map(|_| ())
+    }
+
+    fn list_travel_years(&self) -> Res<Vec<u32>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT DISTINCT CAST(strftime('%Y', t.began) AS INTEGER) AS y FROM travel t ORDER BY y ASC;",
+        )?;
+        stmt.query_map([], |row| row.get::<_, u32>(0))?.collect()
     }
 
     fn add_post_to_travel(&self, travel_id: Id, post: Post) -> Res<Id> {

@@ -3,7 +3,7 @@ mod dao;
 mod model;
 
 use crate::backend::Backend;
-use crate::dao::Dao;
+use crate::dao::{Dao, DaoOps};
 use crate::model::{Response, Travel};
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
@@ -12,6 +12,7 @@ use model::{AppState, Cmd};
 use refinery::{Migration, Runner};
 use rusqlite::Connection;
 use rust_embed::Embed;
+use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 struct DiaryApp {
@@ -31,10 +32,23 @@ impl DiaryApp {
     ) -> Result<Box<Self>, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let default_language = settings_conf.get_string("default_language")?;
 
+        let conn = Connection::open("traveller_diary.db")?;
+        let dao = Dao::new(conn);
+        let years = dao.list_travel_years()?;
+        let (travels, first_year) = match years.first() {
+            Some(y) => (
+                HashMap::from_iter([(*y, dao.list_travels_by_year(*y)?)].into_iter()),
+                Some(*y),
+            ),
+            None => (HashMap::new(), None),
+        };
+
         Ok(Box::new(DiaryApp {
             state: AppState {
                 language: default_language,
-                travels: Vec::new(),
+                years,
+                travels,
+                selected_travel_year: first_year,
             },
             event_sender,
             event_receiver,
@@ -45,8 +59,10 @@ impl DiaryApp {
 
     fn handle_events(&mut self) {
         match self.event_receiver.try_recv() {
-            Ok(Response::LoadTravels { .. }) => {}
-            Ok(Response::AddTravel { id }) => self.state.travels.push(id.to_string()),
+            Ok(Response::LoadTravelsByYear { year, travels }) => {
+                self.state.travels.insert(year, travels);
+            }
+            Ok(Response::AddTravel { id }) => {}
             _ => (),
         }
     }
@@ -139,16 +155,47 @@ impl eframe::App for DiaryApp {
             .get_float("travels_panel_max_width")
             .unwrap() as f32;
 
-        egui::SidePanel::left("travels_panel")
-            .resizable(true)
-            .default_width(travels_panel_default_width)
-            .width_range(travels_panel_min_width..=travels_panel_max_width)
+        egui::TopBottomPanel::bottom("travel_dates")
+            .resizable(false)
             .show(ctx, |ui| {
-                ui.label(self.state.travels.iter().fold(String::new(), |x, y| x + y));
-                egui::ScrollArea::vertical().show(ui, |ui| {});
+                egui::ScrollArea::horizontal().show(ui, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 10,
+                            right: 10,
+                            top: 5,
+                            bottom: 12,
+                        })
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+
+                                for year in self.state.years.iter() {
+                                    if (ui.button(year.to_string()).clicked()) {
+                                        if (!self.state.travels.contains_key(year)) {
+                                            self.event_sender
+                                                .send(Cmd::LoadTravelsByYear { year: *year })
+                                                .unwrap();
+                                        }
+                                        self.state.selected_travel_year = Some(*year);
+                                    };
+                                }
+                                ui.add_space(20.0);
+                            });
+                        });
+                });
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {});
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let empty_vec = Vec::new();
+            let travels = match self.state.selected_travel_year {
+                Some(y) => self.state.travels.get(&y).unwrap_or_else(|| &empty_vec),
+                None => &empty_vec,
+            };
+            for tr in travels {
+                ui.label(tr.city.to_string());
+            }
+        });
     }
 }
 

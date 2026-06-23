@@ -22,10 +22,10 @@ impl<Dao: DaoOps> Backend<Dao> {
     pub fn serve(&self) {
         while let Ok(cmd) = self.cmd_receiver.recv() {
             match cmd {
-                Cmd::LoadTravels { limit, page } => match self.dao.list_travels(limit, page) {
+                Cmd::LoadTravelsByYear { year } => match self.dao.list_travels_by_year(year) {
                     Ok(travels) => self
                         .rsp_sender
-                        .send(Response::LoadTravels { page, travels })
+                        .send(Response::LoadTravelsByYear { year, travels })
                         .unwrap(),
                     Err(err) => log!(Level::Error, "failed to list travels, err: {}", err),
                 },
