@@ -8,11 +8,15 @@ use crate::model::{Response, Travel};
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use config::Config;
+use egui::ImageSource;
+use egui::load::Bytes;
+use egui_flex::{Flex, item};
 use model::{AppState, Cmd};
 use refinery::{Migration, Runner};
 use rusqlite::Connection;
 use rust_embed::Embed;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 struct DiaryApp {
@@ -69,7 +73,7 @@ impl DiaryApp {
 }
 
 impl eframe::App for DiaryApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.handle_events();
 
         let localization_conf = self
@@ -86,8 +90,8 @@ impl eframe::App for DiaryApp {
                 .unwrap()
         };
 
-        egui::TopBottomPanel::top("menu").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+        egui::Panel::top("menu").show(ui, |ui| {
+            egui::menu::MenuBar::new().ui(ui, |ui| {
                 let file_str = get_loc_str("file_menu");
                 let new_travel_str = get_loc_str("new_travel_btn");
                 let settings_str = get_loc_str("settings_menu");
@@ -155,9 +159,9 @@ impl eframe::App for DiaryApp {
             .get_float("travels_panel_max_width")
             .unwrap() as f32;
 
-        egui::TopBottomPanel::bottom("travel_dates")
+        egui::Panel::bottom("travel_dates")
             .resizable(false)
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 egui::ScrollArea::horizontal().show(ui, |ui| {
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
@@ -186,15 +190,33 @@ impl eframe::App for DiaryApp {
                 });
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let empty_vec = Vec::new();
             let travels = match self.state.selected_travel_year {
                 Some(y) => self.state.travels.get(&y).unwrap_or_else(|| &empty_vec),
                 None => &empty_vec,
             };
-            for tr in travels {
-                ui.label(tr.city.to_string());
-            }
+            Flex::horizontal().wrap(true).show(ui, |flex| {
+                for travel in travels.iter() {
+                    let bytes = Assets::get("plus-icon.png").unwrap().data.into_owned();
+                    let image = egui::Image::new(ImageSource::Bytes {
+                        uri: Default::default(),
+                        bytes: Bytes::Shared(Arc::from(bytes)),
+                    })
+                    .max_width(100.0)
+                    .max_height(100.0)
+                    .sense(egui::Sense::click());
+
+                    image.image_options().corner_radius.at_least(5);
+
+                    let resp = flex.add(item(), image);
+
+                    if resp.hovered() {
+                        egui::Tooltip::for_widget(&resp)
+                            .show(|ui| ui.label(travel.city.to_string()));
+                    }
+                }
+            });
         });
     }
 }
@@ -202,6 +224,10 @@ impl eframe::App for DiaryApp {
 #[derive(Embed)]
 #[folder = "migrations/"]
 struct Migrations;
+
+#[derive(Embed)]
+#[folder = "assets/"]
+struct Assets;
 
 fn main() -> Result<(), anyhow::Error> {
     let (cmd_sender, cmd_receiver) = channel::<Cmd>();
