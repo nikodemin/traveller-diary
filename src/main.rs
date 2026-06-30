@@ -4,17 +4,19 @@ mod model;
 
 use crate::backend::Backend;
 use crate::dao::{Dao, DaoOps};
-use crate::model::{Response, Travel};
+use crate::model::Response;
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use config::Config;
-use egui::ImageSource;
+use egui::Widget;
 use egui::load::Bytes;
-use egui_flex::{Flex, item};
+use egui::{ImageSource, Sense};
+use egui_flex::{Flex, FlexAlignContent, FlexInstance, item};
 use model::{AppState, Cmd};
 use refinery::{Migration, Runner};
 use rusqlite::Connection;
 use rust_embed::Embed;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -93,7 +95,6 @@ impl eframe::App for DiaryApp {
         egui::Panel::top("menu").show(ui, |ui| {
             egui::menu::MenuBar::new().ui(ui, |ui| {
                 let file_str = get_loc_str("file_menu");
-                let new_travel_str = get_loc_str("new_travel_btn");
                 let settings_str = get_loc_str("settings_menu");
                 let change_language_str = get_loc_str("change_language_menu");
 
@@ -105,31 +106,7 @@ impl eframe::App for DiaryApp {
                     .flat_map(|x| x.clone().into_string())
                     .collect::<Vec<_>>();
 
-                ui.menu_button(file_str, |ui| {
-                    if ui.button(new_travel_str).clicked() {
-                        self.event_sender
-                            .send(Cmd::AddTravel {
-                                travel: Travel {
-                                    id: 0,
-                                    country: "USA".into(),
-                                    city: "Las Vegas".into(),
-                                    began: NaiveDateTime::parse_from_str(
-                                        "2026-03-14 12:00",
-                                        "%Y-%m-%d %H:%M",
-                                    )
-                                    .unwrap(),
-                                    ended: NaiveDateTime::parse_from_str(
-                                        "2026-03-21 11:00",
-                                        "%Y-%m-%d %H:%M",
-                                    )
-                                    .unwrap(),
-                                    cover: None,
-                                },
-                            })
-                            .unwrap();
-                        println!("new travel")
-                    }
-                });
+                ui.menu_button(file_str, |ui| {});
 
                 ui.menu_button(settings_str, |ui| {
                     ui.menu_button(change_language_str, |ui| {
@@ -196,12 +173,16 @@ impl eframe::App for DiaryApp {
                 Some(y) => self.state.travels.get(&y).unwrap_or_else(|| &empty_vec),
                 None => &empty_vec,
             };
-            Flex::horizontal().wrap(true).show(ui, |flex| {
-                for travel in travels.iter() {
-                    let bytes = Assets::get("plus-icon.png").unwrap().data.into_owned();
+
+            let make_travel =
+                |flex: &mut FlexInstance,
+                 b: Vec<u8>,
+                 id: String,
+                 img_id: String,
+                 meta: Option<(String, String, NaiveDateTime, NaiveDateTime)>| {
                     let image = egui::Image::new(ImageSource::Bytes {
-                        uri: Default::default(),
-                        bytes: Bytes::Shared(Arc::from(bytes)),
+                        uri: Cow::Owned(img_id),
+                        bytes: Bytes::Shared(Arc::from(b)),
                     })
                     .max_width(100.0)
                     .max_height(100.0)
@@ -209,14 +190,73 @@ impl eframe::App for DiaryApp {
 
                     image.image_options().corner_radius.at_least(5);
 
-                    let resp = flex.add(item(), image);
+                    let add_label =
+                        |flex: &mut FlexInstance, str| flex.add(item(), egui::Label::new(str));
 
-                    if resp.hovered() {
-                        egui::Tooltip::for_widget(&resp)
-                            .show(|ui| ui.label(travel.city.to_string()));
-                    }
-                }
-            });
+                    flex.add_flex(
+                        item().sense(Sense::click()),
+                        Flex::vertical().align_content(FlexAlignContent::Center),
+                        |flex| match meta {
+                            None => {
+                                flex.add(item(), image);
+                                add_label(flex, get_loc_str("new_travel"));
+                            }
+                            Some((country, city, began, ended)) => {
+                                flex.add(item(), image);
+                                add_label(flex, country);
+                                add_label(flex, city);
+                                add_label(flex, format!("{:?} - {:?}", began.date(), ended.date()));
+                            }
+                        },
+                    )
+                };
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    Flex::horizontal().wrap(true).show(ui, |flex| {
+                        let plus_bytes = Assets::get("plus-icon.png").unwrap().data.to_vec();
+
+                        let resp = make_travel(
+                            flex,
+                            plus_bytes,
+                            "plus".to_string(),
+                            "plus".to_string(),
+                            None,
+                        );
+
+                        if resp.response.clicked() {
+                            //todo fix
+                            println!("new travel");
+                        }
+
+                        for travel in travels.iter() {
+                            let (bytes, uri) = travel
+                                .cover
+                                .clone()
+                                .map(|p| (p.data, p.id.to_string()))
+                                .unwrap_or_else(|| {
+                                    (
+                                        Assets::get("island.png").unwrap().data.to_vec(),
+                                        "island".to_string(),
+                                    )
+                                });
+
+                            make_travel(
+                                flex,
+                                bytes,
+                                travel.id.to_string(),
+                                uri,
+                                Some((
+                                    travel.country.clone(),
+                                    travel.city.clone(),
+                                    travel.began,
+                                    travel.ended,
+                                )),
+                            );
+                        }
+                    });
+                });
         });
     }
 }

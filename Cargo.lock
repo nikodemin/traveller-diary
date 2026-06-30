@@ -1084,15 +1084,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui_material_icons"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd64a174529ad8ad5b3fcf74bafa368ed24aacc5887c2742b1e69ce4151c1a61"
-dependencies = [
- "egui",
-]
-
-[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3954,9 +3945,9 @@ dependencies = [
  "egui",
  "egui_extras",
  "egui_flex",
- "egui_material_icons",
  "log",
  "proptest",
+ "rand 0.9.4",
  "refinery",
  "rusqlite",
  "rust-embed",
