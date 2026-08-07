@@ -1,25 +1,7 @@
 use chrono::prelude::*;
-use std::collections::HashMap;
 
 pub type Id = i64;
 
-#[derive(Debug, Clone)]
-pub struct AppState {
-    pub language: String,
-    pub years: Vec<u32>,
-    pub travels: HashMap<u32, Vec<Travel>>,
-    pub selected_travel_year: Option<u32>,
-}
-
-pub enum Cmd {
-    LoadTravelsByYear { year: u32 },
-    AddTravel { travel: Travel },
-}
-
-pub enum Response {
-    LoadTravelsByYear { year: u32, travels: Vec<Travel> },
-    AddTravel { id: Id },
-}
 #[derive(Debug, Clone)]
 pub struct Travel {
     pub id: Id,

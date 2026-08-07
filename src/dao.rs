@@ -7,14 +7,14 @@ use rusqlite::{
     types::{FromSql, FromSqlError},
 };
 
-pub struct Dao {
-    connection: Connection,
+pub struct Dao<'a> {
+    connection: &'a mut Connection,
 }
 
-impl Dao {
-    const DT_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+impl<'a> Dao<'a> {
+    const DT_FORMAT: &'a str = "%Y-%m-%d %H:%M:%S";
 
-    pub fn new(connection: Connection) -> Self {
+    pub fn new<'b: 'a>(connection: &'b mut Connection) -> Self {
         Dao { connection }
     }
 }
@@ -129,9 +129,9 @@ impl ToSql for Wrapper<NaiveDateTime> {
     }
 }
 
-impl DaoOps for Dao {
+impl<'a> DaoOps for Dao<'a> {
     fn init(&mut self) -> Result<(), refinery::Error> {
-        embedded::migrations::runner().run(&mut self.connection)?;
+        embedded::migrations::runner().run(self.connection)?;
         Ok(())
     }
 
@@ -398,8 +398,7 @@ mod tests {
     use super::*;
     use {prop::prelude::*, proptest as prop};
 
-    fn init() -> Dao {
-        let conn: Connection = Connection::open_in_memory().unwrap();
+    fn init(conn: &mut Connection) -> Dao {
         let mut dao = Dao::new(conn);
         dao.init().unwrap();
         dao
@@ -481,7 +480,8 @@ mod tests {
     proptest! {
         #[test]
         fn create_and_list(travels in vec_gen(travel())) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             for travel in travels.iter() {
                 dao.add_travel(travel.clone()).unwrap();
@@ -496,7 +496,8 @@ mod tests {
 
         #[test]
         fn create_and_update_travel(travel in travel(), travel2 in travel()) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             let travel_id = dao.add_travel(travel.clone()).unwrap();
 
@@ -513,7 +514,8 @@ mod tests {
 
         #[test]
         fn create_and_delete_travel(travel in travel()) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             let travel_id = dao.add_travel(travel.clone()).unwrap();
 
@@ -526,7 +528,8 @@ mod tests {
 
         #[test]
         fn add_post_to_travel(travel in travel(), posts in vec_gen(post())) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             dao.add_travel(travel.clone()).unwrap();
 
@@ -541,7 +544,8 @@ mod tests {
 
         #[test]
         fn add_and_delete_posts(travel in travel(), posts in vec_gen(post())) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             dao.add_travel(travel.clone()).unwrap();
 
@@ -558,7 +562,8 @@ mod tests {
 
         #[test]
         fn list_travel_with_pagination(travels in vec_gen(travel())) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             for travel in travels.clone() {
                 dao.add_travel(travel.clone()).unwrap();
@@ -574,7 +579,8 @@ mod tests {
 
         #[test]
         fn create_and_update_post(travel in travel(), post in post(), updated_post in post()) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             let travel_id = dao.add_travel(travel.clone()).unwrap();
             let post_id = dao.add_post_to_travel(travel_id, post.clone()).unwrap();
@@ -592,7 +598,8 @@ mod tests {
 
         #[test]
         fn add_photos_to_post(travel in travel(), post in post(), photos in vec_gen(photo())) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             let travel_id = dao.add_travel(travel.clone()).unwrap();
             let post_id = dao.add_post_to_travel(travel_id, post.clone()).unwrap();
@@ -607,7 +614,8 @@ mod tests {
 
         #[test]
         fn add_and_delete_photos_to_post(travel in travel(), post in post(), photos in vec_gen(photo())) {
-            let dao = init();
+            let mut conn = Connection::open_in_memory().unwrap();
+            let dao = init(&mut conn);
 
             let travel_id = dao.add_travel(travel.clone()).unwrap();
             let post_id = dao.add_post_to_travel(travel_id, post.clone()).unwrap();
@@ -626,7 +634,8 @@ mod tests {
 
     #[test]
     fn indepotent_init() {
-        let mut session_manager = init();
+        let mut conn = Connection::open_in_memory().unwrap();
+        let mut session_manager = init(&mut conn);
         session_manager.init().unwrap();
         session_manager.init().unwrap();
     }
