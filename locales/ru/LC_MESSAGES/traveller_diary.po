@@ -1,0 +1,33 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"POT-Creation-Date: 2026-08-06 22:45+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#: ui/app-window.slint:8
+msgctxt "MainWindow"
+msgid "File"
+msgstr "Файл"
+
+#: ui/app-window.slint:10
+msgctxt "MainWindow"
+msgid "Exit"
+msgstr "Выйти"
+
+#: ui/app-window.slint:15
+msgctxt "MainWindow"
+msgid "Settings"
+msgstr "Настройки"
+
+#: ui/app-window.slint:17
+msgctxt "MainWindow"
+msgid "Language"
+msgstr "Язык"

@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.35.0"
-egui = "0.35.0"
-egui_extras = { version = "0.35.0", features = ["image"] }
 anyhow = ">=1.0.82"
 config = ">=0.15.11"
 chrono = ">=0.4.40"
@@ -15,5 +12,12 @@ rusqlite = { version = ">=0.30.0", features = ["bundled"] }
 proptest = ">=1.0.0"
 log = ">=0.4.32"
 rust-embed = ">=8.11.0"
-egui_flex = ">=0.7.0"
 rand = "0.9.4"
+slint = { version = "1.17.1", features = ["gettext"]}
+
+[build-dependencies]
+slint-build = "1.16.1"
+
+[profile.release]
+codegen-units = 1
+lto = true

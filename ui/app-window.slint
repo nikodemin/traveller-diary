@@ -1,0 +1,29 @@
+export component MainWindow inherits Window {
+    callback exit();
+    callback setLanguage(short: string);
+
+    in property <[{name: string, short: string}]> languages;
+
+    min-height: 300px;
+    min-width: 500px;
+
+    MenuBar {
+        Menu {
+            title: @tr("File");
+            MenuItem {
+                title: @tr("Exit");
+                activated => exit();
+            }
+        }
+        Menu {
+            title: @tr("Settings");
+            Menu {
+                title: @tr("Language");
+                for l in languages : lang := MenuItem {
+                    title: l.name;
+                    activated => setLanguage(l.short);
+                }
+            }
+        }
+    }
+}
