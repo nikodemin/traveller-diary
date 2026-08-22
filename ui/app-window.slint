@@ -1,11 +1,22 @@
+import { State, GridViewSettings } from "common.slint";
+import { TravelView, TravelViewProps } from "travel-view.slint";
+
+export {TravelViewProps, GridViewSettings }
 export component MainWindow inherits Window {
+    min-height: 300px;
+    min-width: 500px;
+
     callback exit();
     callback setLanguage(short: string);
 
-    in property <[{name: string, short: string}]> languages;
+    in property <[{ name: string, short: string}]> languages;
+    in-out property <State> state;
 
-    min-height: 300px;
-    min-width: 500px;
+    states [
+        main-view when state == State.main-view: {}
+        travels-view when state == State.travels-view: {}
+        photos-view when state == State.photos-view: {}
+    ]
 
     MenuBar {
         Menu {
@@ -15,15 +26,22 @@ export component MainWindow inherits Window {
                 activated => exit();
             }
         }
+
         Menu {
             title: @tr("Settings");
             Menu {
                 title: @tr("Language");
-                for l in languages : lang := MenuItem {
+                for l in languages: lang := MenuItem {
                     title: l.name;
                     activated => setLanguage(l.short);
                 }
             }
         }
+    }
+
+    TravelView {
+        visible: state == State.travels-view;
+        width: 100%;
+        height: 100%;
     }
 }

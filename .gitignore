@@ -1,3 +1,5 @@
-/target
+**/target
 /proptest-regressions
 traveller_diary.db
+Cargo.lock
+.idea
